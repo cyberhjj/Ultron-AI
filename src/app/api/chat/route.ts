@@ -471,6 +471,18 @@ export async function POST(req: Request) {
 
     const cleanMessages = sanitizeMessages(messages);
 
+    // Verify that at least one API key is present
+    const hasKeys = MODEL_CHAIN.some(m => !!m.apiKey);
+    if (!hasKeys) {
+      return Response.json(
+        {
+          error: "Missing LLM API Keys",
+          hint: "Your LLM API keys are missing. Please copy your environment variables (LLM_API_KEY, E2B_API_KEY, etc.) from your local .env.local file and add them to the 'Environment Variables' tab in your Vercel Project Settings, then redeploy.",
+        },
+        { status: 400 }
+      );
+    }
+
     // ── Model Fallback Chain ──────────────────────────────────────────────────
     let lastError: Error | null = null;
 
@@ -484,6 +496,8 @@ export async function POST(req: Request) {
         const provider = createOpenAI({
           baseURL: modelConfig.baseURL,
           apiKey: modelConfig.apiKey,
+          // @ts-ignore
+          compatibility: "compatible", // force standard /chat/completions endpoint
         });
 
         const result = streamText({
