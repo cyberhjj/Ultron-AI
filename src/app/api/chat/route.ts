@@ -519,7 +519,7 @@ function buildTools(sessionId: string) {
 // ─── Route Handler ────────────────────────────────────────────────────────────
 export async function POST(req: Request) {
   // Authentication check
-  const authError = validateRequest(req);
+  const authError = await validateRequest(req);
   if (authError) return authError;
 
   try {
@@ -569,6 +569,9 @@ export async function POST(req: Request) {
           messages: cleanMessages as ModelMessage[],
           stopWhen: stepCountIs(8),
           tools: buildTools(activeSession),
+          onError: ({ error }) => {
+            console.error(`[Ultron] Stream error with ${modelConfig.label}:`, error);
+          },
           onFinish: () => {
             console.log(`[Ultron] Session ${activeSession} completed with ${modelConfig.label}`);
           },
@@ -607,7 +610,7 @@ export async function POST(req: Request) {
 
 // ─── DELETE /api/chat — Kill sandbox session manually ────────────────────────
 export async function DELETE(req: Request) {
-  const authError = validateRequest(req);
+  const authError = await validateRequest(req);
   if (authError) return authError;
 
   try {

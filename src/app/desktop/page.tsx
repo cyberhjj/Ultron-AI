@@ -18,26 +18,35 @@ export default function DesktopPage() {
   const [zoom, setZoom] = useState(100);
 
   useEffect(() => {
+    let cancelled = false;
     fetch("/api/sandboxes")
       .then((res) => res.json())
       .then((data) => {
+        if (cancelled) return;
         const sbs = data.sandboxes ?? [];
         setSandboxes(sbs);
-        if (sbs.length > 0 && !selectedSandbox) {
-          setSelectedSandbox(sbs[0].sessionId);
+        if (sbs.length > 0) {
+          setSelectedSandbox((prev) => prev ?? sbs[0].sessionId);
         }
       })
       .catch((err) => console.error("Failed to fetch sandboxes:", err))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
     const interval = setInterval(() => {
       fetch("/api/sandboxes")
         .then((res) => res.json())
-        .then((data) => setSandboxes(data.sandboxes ?? []))
+        .then((data) => {
+          if (!cancelled) setSandboxes(data.sandboxes ?? []);
+        })
         .catch(() => {});
     }, 5000);
-    return () => clearInterval(interval);
-  }, [selectedSandbox]);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
 
   return (
     <div className="flex flex-col h-full bg-background/95">

@@ -105,11 +105,11 @@ export default function SandboxPage() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium flex items-center gap-2">
                   <Cpu className="w-4 h-4 text-green-500" />
-                  Compute Usage
+                  Total Commands
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold">{sandboxes.length > 0 ? "12%" : "0%"}</div>
+                <div className="text-3xl font-bold">{sandboxes.reduce((sum, s) => sum + s.logs.length, 0)}</div>
               </CardContent>
             </Card>
 

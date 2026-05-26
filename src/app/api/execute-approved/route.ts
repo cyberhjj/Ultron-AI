@@ -12,7 +12,7 @@ function isValidToolCallId(value: string): boolean {
 }
 
 export async function POST(req: Request) {
-  const authError = validateRequest(req);
+  const authError = await validateRequest(req);
   if (authError) return authError;
 
   try {
