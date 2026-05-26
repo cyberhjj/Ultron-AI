@@ -42,13 +42,13 @@ export default function IDEPage() {
       .then((data) => {
         const f = data.files ?? [];
         setFiles(f);
-        if (f.length > 0 && !selectedFile) {
-          setSelectedFile(f[0]);
+        if (f.length > 0) {
+          setSelectedFile((prev) => prev ?? f[0]);
         }
       })
       .catch((err) => console.error("Failed to fetch files:", err))
       .finally(() => setLoading(false));
-  }, [selectedFile]);
+  }, []);
 
   useEffect(() => {
     fetchFiles();
