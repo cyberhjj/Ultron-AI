@@ -14,7 +14,7 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { streamText, tool } from "ai";
 import { z } from "zod";
-import { getOrCreateSandbox, killSandbox } from "@/lib/sandbox-manager";
+import { getOrCreateSandbox, killSandbox, addSandboxLog } from "@/lib/sandbox-manager";
 
 export const maxDuration = 60;
 
@@ -239,6 +239,8 @@ function buildTools(sessionId: string) {
             timeoutMs: TOOL_TIMEOUTS.execute_bash,
           });
 
+          addSandboxLog(sessionId, command, exec.stdout + (exec.stderr ? "\n" + exec.stderr : ""));
+
           return {
             status: "success",
             risk_level: risk,
@@ -248,6 +250,7 @@ function buildTools(sessionId: string) {
             exit_code: exec.exitCode,
           };
         } catch (err: any) {
+          addSandboxLog(sessionId, command, `ERROR: ${err.message}`);
           return {
             status: "error",
             risk_level: risk,

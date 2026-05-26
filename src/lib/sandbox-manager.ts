@@ -10,9 +10,16 @@
 
 import { Sandbox } from "e2b";
 
+// ─── Sandbox Session Interface ────────────────────────────────────────────────
+interface SandboxSession {
+  sandbox: Sandbox;
+  lastUsed: number;
+  logs: { command: string; output: string; timestamp: number }[];
+}
+
 // ─── Sandbox Session Map ──────────────────────────────────────────────────────
 // Stores active sandbox instances keyed by sessionId.
-const sandboxSessions = new Map<string, { sandbox: Sandbox; lastUsed: number }>();
+const sandboxSessions = new Map<string, SandboxSession>();
 
 // Clean up idle sandboxes older than 10 minutes
 setInterval(() => {
@@ -45,7 +52,7 @@ export async function getOrCreateSandbox(sessionId: string): Promise<Sandbox> {
     "echo 'Session started: ' $(date) >> /home/user/pentest/findings.md"
   );
 
-  sandboxSessions.set(sessionId, { sandbox, lastUsed: Date.now() });
+  sandboxSessions.set(sessionId, { sandbox, lastUsed: Date.now(), logs: [] });
   return sandbox;
 }
 
@@ -58,4 +65,32 @@ export async function killSandbox(sessionId: string): Promise<boolean> {
     return true;
   }
   return false;
+}
+
+// ─── Add Sandbox Execution Log ───────────────────────────────────────────────
+export function addSandboxLog(sessionId: string, command: string, output: string) {
+  const session = sandboxSessions.get(sessionId);
+  if (session) {
+    session.logs.push({
+      command,
+      output: output || "(no output)",
+      timestamp: Date.now(),
+    });
+    session.lastUsed = Date.now();
+  }
+}
+
+// ─── Get Active Sandboxes ─────────────────────────────────────────────────────
+export function getActiveSandboxes() {
+  const active = [];
+  const now = Date.now();
+  for (const [id, session] of sandboxSessions.entries()) {
+    active.push({
+      sessionId: id,
+      sandboxId: session.sandbox.sandboxId,
+      ageSeconds: Math.floor((now - session.lastUsed) / 1000),
+      logs: session.logs,
+    });
+  }
+  return active;
 }
