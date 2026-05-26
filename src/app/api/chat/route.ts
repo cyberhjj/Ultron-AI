@@ -21,7 +21,8 @@ import crypto from "crypto";
 import { getOrCreateSandbox, killSandbox, addSandboxLog } from "@/lib/sandbox-manager";
 import { validateRequest } from "@/lib/auth";
 import { filterToolOutput } from "@/lib/cot-filter";
-import { MODEL_ROSTER, getModelChain, type AgentRole } from "@/lib/models";
+import { getModelChain } from "@/lib/models";
+import { trackFileChange, addWorklogEntry, addShellEntry, trackIDEFile } from "@/lib/session-tracker";
 
 export const maxDuration = 60;
 
@@ -120,11 +121,19 @@ const TOOL_TIMEOUTS: Record<string, number> = {
 
 // ─── Input Sanitization ──────────────────────────────────────────────────────
 function sanitizePath(path: string): string {
-  // Remove null bytes, command substitution, and shell metacharacters
-  return path
+  let sanitized = path
     .replace(/\0/g, "")
-    .replace(/[`$(){}|;&]/g, "")
-    .replace(/\.\.\//g, "");
+    .replace(/[`$(){}|;&'"\\]/g, "");
+  // Loop to fully resolve traversal sequences (e.g. ....// -> ../ -> "")
+  let prev = "";
+  while (prev !== sanitized) {
+    prev = sanitized;
+    sanitized = sanitized.replace(/\.\.\//g, "").replace(/\.\.\\/g, "");
+  }
+  if (!sanitized.startsWith("/")) {
+    sanitized = "/home/user/" + sanitized;
+  }
+  return sanitized;
 }
 
 function sanitizePackageName(name: string): string {
@@ -258,12 +267,16 @@ function buildTools(sessionId: string) {
           const sandbox = await getOrCreateSandbox(sessionId);
           console.log(`[Ultron] [${risk.toUpperCase()}] ${command}`);
 
+          const startTime = Date.now();
           const exec = await sandbox.commands.run(command, {
             timeoutMs: TOOL_TIMEOUTS.execute_bash,
           });
+          const durationMs = Date.now() - startTime;
 
           const rawOutput = exec.stdout + (exec.stderr ? "\n" + exec.stderr : "");
           addSandboxLog(sessionId, command, rawOutput);
+          addShellEntry(sessionId, command, exec.stdout, exec.stderr, exec.exitCode, durationMs);
+          addWorklogEntry(sessionId, "command", `$ ${command}`, "success", rawOutput.slice(0, 500));
 
           const filtered = filterToolOutput("execute_bash", rawOutput);
 
@@ -278,6 +291,8 @@ function buildTools(sessionId: string) {
         } catch (err: unknown) {
           const errMsg = err instanceof Error ? err.message : String(err);
           addSandboxLog(sessionId, command, `ERROR: ${errMsg}`);
+          addShellEntry(sessionId, command, "", errMsg, -1, 0);
+          addWorklogEntry(sessionId, "command", `$ ${command}`, "error", errMsg);
           return {
             status: "error",
             risk_level: risk,
@@ -317,11 +332,13 @@ function buildTools(sessionId: string) {
               signal: AbortSignal.timeout(TOOL_TIMEOUTS.web_search),
             });
             const data = await res.json();
+            const result = data.choices?.[0]?.message?.content ?? "No results";
+            addWorklogEntry(sessionId, "web_search", `Search: ${query}`, "success", result.slice(0, 500));
             return {
               status: "success" as const,
               source: "perplexity",
               query,
-              result: data.choices?.[0]?.message?.content ?? "No results",
+              result,
             };
           }
 
@@ -341,6 +358,7 @@ function buildTools(sessionId: string) {
               .slice(0, 5)
               .map((r: SerperResult) => `**${r.title}**\n${r.link}\n${r.snippet}`)
               .join("\n\n---\n\n");
+            addWorklogEntry(sessionId, "web_search", `Search: ${query}`, "success", (results || "No results").slice(0, 500));
             return {
               status: "success" as const,
               source: "serper",
@@ -367,9 +385,11 @@ function buildTools(sessionId: string) {
             const results = (data.results ?? [])
               .map((r: TavilyResult) => `**${r.title}**\n${r.url}\n${r.content}`)
               .join("\n\n---\n\n");
+            addWorklogEntry(sessionId, "web_search", `Search: ${query}`, "success", (results || "No results").slice(0, 500));
             return { status: "success" as const, source: "tavily", query, result: results || "No results" };
           }
 
+          addWorklogEntry(sessionId, "web_search", `Search: ${query}`, "error", "No search API key configured");
           return {
             status: "no_api_key" as const,
             query,
@@ -377,6 +397,7 @@ function buildTools(sessionId: string) {
           };
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
+          addWorklogEntry(sessionId, "web_search", `Search: ${query}`, "error", message);
           return { status: "error" as const, query, error: message };
         }
       },
@@ -401,13 +422,18 @@ function buildTools(sessionId: string) {
             `test -f '${safePath}' && head -n ${safeLines} '${safePath}' || echo 'FILE NOT FOUND: ${safePath}'`,
             { timeoutMs: TOOL_TIMEOUTS.read_file },
           );
+          const fileContent = exec.stdout || "(empty file)";
+          trackFileChange(sessionId, safePath, "read", fileContent);
+          trackIDEFile(sessionId, safePath, fileContent);
+          addWorklogEntry(sessionId, "file_read", `Read ${safePath}`, "success");
           return {
             status: "success" as const,
             path: safePath,
-            content: exec.stdout || "(empty file)",
+            content: fileContent,
           };
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
+          addWorklogEntry(sessionId, "file_read", `Read ${path}`, "error", message);
           return { status: "error" as const, path, error: message };
         }
       },
@@ -433,9 +459,13 @@ function buildTools(sessionId: string) {
             `mkdir -p "$(dirname '${safePath}')" && printf '%s' '${encoded}' | base64 -d > '${safePath}'`,
             { timeoutMs: TOOL_TIMEOUTS.write_file },
           );
+          trackFileChange(sessionId, safePath, "write", content, content.length);
+          trackIDEFile(sessionId, safePath, content);
+          addWorklogEntry(sessionId, "file_write", `Wrote ${safePath} (${content.length} bytes)`, "success");
           return { status: "success" as const, path: safePath, bytes: content.length };
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
+          addWorklogEntry(sessionId, "file_write", `Write ${path}`, "error", message);
           return { status: "error" as const, path, error: message };
         }
       },
@@ -469,6 +499,7 @@ function buildTools(sessionId: string) {
           const exec = await sandbox.commands.run(cmd, {
             timeoutMs: TOOL_TIMEOUTS.install_tool,
           });
+          addWorklogEntry(sessionId, "tool_install", `Installed ${tool_name} via ${method}`, "success");
           return {
             status: "success" as const,
             tool_name,
@@ -477,6 +508,7 @@ function buildTools(sessionId: string) {
           };
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
+          addWorklogEntry(sessionId, "tool_install", `Install ${tool_name} via ${method}`, "error", message);
           return { status: "error" as const, tool_name, error: message };
         }
       },
@@ -487,7 +519,7 @@ function buildTools(sessionId: string) {
 // ─── Route Handler ────────────────────────────────────────────────────────────
 export async function POST(req: Request) {
   // Authentication check
-  const authError = validateRequest(req);
+  const authError = await validateRequest(req);
   if (authError) return authError;
 
   try {
@@ -537,6 +569,9 @@ export async function POST(req: Request) {
           messages: cleanMessages as ModelMessage[],
           stopWhen: stepCountIs(8),
           tools: buildTools(activeSession),
+          onError: ({ error }) => {
+            console.error(`[Ultron] Stream error with ${modelConfig.label}:`, error);
+          },
           onFinish: () => {
             console.log(`[Ultron] Session ${activeSession} completed with ${modelConfig.label}`);
           },
@@ -575,7 +610,7 @@ export async function POST(req: Request) {
 
 // ─── DELETE /api/chat — Kill sandbox session manually ────────────────────────
 export async function DELETE(req: Request) {
-  const authError = validateRequest(req);
+  const authError = await validateRequest(req);
   if (authError) return authError;
 
   try {

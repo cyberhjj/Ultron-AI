@@ -24,8 +24,8 @@ export default function SandboxPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchSandboxes = async (showLoading = false) => {
-    if (showLoading) setLoading(true);
+  const fetchSandboxes = async (isRefresh: boolean) => {
+    if (!isRefresh) setLoading(true);
     else setRefreshing(true);
     try {
       const res = await fetch("/api/sandboxes");
@@ -42,11 +42,25 @@ export default function SandboxPage() {
   };
 
   useEffect(() => {
-    fetchSandboxes(true);
+    let cancelled = false;
+    fetch("/api/sandboxes")
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled && data.sandboxes) {
+          setSandboxes(data.sandboxes);
+        }
+      })
+      .catch((err) => console.error("Failed to fetch sandboxes:", err))
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     const interval = setInterval(() => {
-      fetchSandboxes(false);
-    }, 5000); // Poll every 5 seconds
-    return () => clearInterval(interval);
+      fetchSandboxes(true);
+    }, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   return (
@@ -63,7 +77,7 @@ export default function SandboxPage() {
           variant="outline" 
           size="sm" 
           className="gap-2 border-primary/20 hover:bg-primary/10"
-          onClick={() => fetchSandboxes(false)}
+          onClick={() => fetchSandboxes(true)}
           disabled={loading || refreshing}
         >
           <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
@@ -91,11 +105,11 @@ export default function SandboxPage() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium flex items-center gap-2">
                   <Cpu className="w-4 h-4 text-green-500" />
-                  Compute Usage
+                  Total Commands
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold">{sandboxes.length > 0 ? "12%" : "0%"}</div>
+                <div className="text-3xl font-bold">{sandboxes.reduce((sum, s) => sum + s.logs.length, 0)}</div>
               </CardContent>
             </Card>
 

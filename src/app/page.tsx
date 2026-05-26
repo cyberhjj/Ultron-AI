@@ -9,8 +9,12 @@ import { Shield, Send, TerminalSquare, User, Globe, FileText, FileEdit, Package 
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AgentApprovalGate } from "@/components/AgentApprovalGate";
-import { useState, useRef, useCallback } from "react";
+import { useState, useCallback } from "react";
+import { DefaultChatTransport } from "ai";
 import type { FlowMode } from "@/lib/agent/flow";
+
+// Module-level session ID — persists across re-renders without triggering ref-in-render lint
+let currentSessionId: string | null = null;
 
 // ─── Auto Flow Mode Detection ─────────────────────────────────────────────────
 const FLOW_MODE_PATTERNS: { mode: FlowMode; patterns: RegExp[] }[] = [
@@ -194,10 +198,25 @@ function ToolInvocationDisplay({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function Home() {
   const [input, setInput] = useState("");
-  const [detectedMode, setDetectedMode] = useState<FlowMode | null>(null);
-  const sessionIdRef = useRef<string | null>(null);
+  const [detectedMode, setDetectedMode] = useState<FlowMode>("standard");
+
+  const [transport] = useState(
+    () =>
+      new DefaultChatTransport({
+        body: () => (currentSessionId ? { sessionId: currentSessionId } : {}),
+        fetch: async (url, init) => {
+          const response = await globalThis.fetch(url, init);
+          const sid = response.headers.get("X-Session-Id");
+          if (sid && !currentSessionId) {
+            currentSessionId = sid;
+          }
+          return response;
+        },
+      }),
+  );
 
   const chatResult = useChat({
+    transport,
     onError: (err: Error) => console.error("useChat error:", err),
   });
 
@@ -238,7 +257,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           command,
-          sessionId: sessionIdRef.current,
+          sessionId: currentSessionId ?? "",
           approvalToken: taskId,
         }),
       })
@@ -288,6 +307,9 @@ export default function Home() {
           </h1>
           <p className="text-sm text-muted-foreground">
             AI-powered autonomous penetration testing with Flow Engine + 13 specialist agents.
+            {detectedMode !== "standard" && (
+              <span className="ml-2 text-primary font-medium">[{detectedMode.toUpperCase()} MODE]</span>
+            )}
           </p>
         </div>
       </header>
